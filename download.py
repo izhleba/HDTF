@@ -7,12 +7,11 @@ The discarded videos constitute a small portion of the dataset, so you can try t
 
 Usage:
 ```
-$ python download.py --output_dir /tmp/data/hdtf --num_workers 8
+$ python download.py --output_dir /tmp/data/hdtf --num_workers 8 --no_crop
 ```
 
 You need tqdm and youtube-dl libraries to be installed for this script to work.
 """
-
 
 import os
 import argparse
@@ -24,11 +23,11 @@ from urllib import parse
 
 from tqdm import tqdm
 
-
 subsets = ["RD", "WDA", "WRA"]
 
 
-def download_hdtf(source_dir: os.PathLike, output_dir: os.PathLike, num_workers: int, **process_video_kwargs):
+def download_hdtf(source_dir: os.PathLike, output_dir: os.PathLike, num_workers: int,
+                  no_crop: bool, **process_video_kwargs):
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.join(output_dir, '_videos_raw'), exist_ok=True)
 
@@ -36,15 +35,17 @@ def download_hdtf(source_dir: os.PathLike, output_dir: os.PathLike, num_workers:
     task_kwargs = [dict(
         video_data=vd,
         output_dir=output_dir,
+        no_crop=no_crop,
         **process_video_kwargs,
-     ) for vd in download_queue]
+    ) for vd in download_queue]
     pool = Pool(processes=num_workers)
     tqdm_kwargs = dict(total=len(task_kwargs), desc=f'Downloading videos into {output_dir} (note: without sound)')
 
     for _ in tqdm(pool.imap_unordered(task_proxy, task_kwargs), **tqdm_kwargs):
         pass
 
-    print('Download is finished, you can now (optionally) delete the following directories, since they are not needed anymore and occupy a lot of space:')
+    print(
+        'Download is finished, you can now (optionally) delete the following directories, since they are not needed anymore and occupy a lot of space:')
     print(' -', os.path.join(output_dir, '_videos_raw'))
 
 
@@ -59,11 +60,13 @@ def construct_download_queue(source_dir: os.PathLike, output_dir: os.PathLike) -
 
         for video_name, (video_url,) in video_urls.items():
             if not f'{video_name}.mp4' in intervals:
-                print(f'Entire {subset}/{video_name} does not contain any clip intervals, hence is broken. Discarding it.')
+                print(
+                    f'Entire {subset}/{video_name} does not contain any clip intervals, hence is broken. Discarding it.')
                 continue
 
             if not f'{video_name}.mp4' in resolutions or len(resolutions[f'{video_name}.mp4']) > 1:
-                print(f'Entire {subset}/{video_name} does not contain the resolution (or it is in a bad format), hence is broken. Discarding it.')
+                print(
+                    f'Entire {subset}/{video_name} does not contain the resolution (or it is in a bad format), hence is broken. Discarding it.')
                 continue
 
             all_clips_intervals = [x.split('-') for x in intervals[f'{video_name}.mp4']]
@@ -105,13 +108,14 @@ def task_proxy(kwargs):
     return download_and_process_video(**kwargs)
 
 
-def download_and_process_video(video_data: Dict, output_dir: str):
+def download_and_process_video(video_data: Dict, output_dir: str, no_crop: bool):
     """
     Downloads the video and cuts/crops it into several ones according to the provided time intervals
     """
     raw_download_path = os.path.join(output_dir, '_videos_raw', f"{video_data['name']}.mp4")
     raw_download_log_file = os.path.join(output_dir, '_videos_raw', f"{video_data['name']}_download_log.txt")
-    download_result = download_video(video_data['id'], raw_download_path, resolution=video_data['resolution'], log_file=raw_download_log_file)
+    download_result = download_video(video_data['id'], raw_download_path, resolution=video_data['resolution'],
+                                     log_file=raw_download_log_file)
 
     if not download_result:
         print('Failed to download', video_data)
@@ -122,14 +126,16 @@ def download_and_process_video(video_data: Dict, output_dir: str):
     # Youtube-dl selects a (presumably) highest one
     video_resolution = get_video_resolution(raw_download_path)
     if not video_resolution != video_data['resolution']:
-        print(f"Downloaded resolution is not correct for {video_data['name']}: {video_resolution} vs {video_data['name']}. Discarding this video.")
+        print(
+            f"Downloaded resolution is not correct for {video_data['name']}: {video_resolution} vs {video_data['name']}. Discarding this video.")
         return
 
     for clip_idx in range(len(video_data['intervals'])):
         start, end = video_data['intervals'][clip_idx]
         clip_name = f'{video_data["name"]}_{clip_idx:03d}'
         clip_path = os.path.join(output_dir, clip_name + '.mp4')
-        crop_success = cut_and_crop_video(raw_download_path, clip_path, start, end, video_data['crops'][clip_idx])
+        crop_success = cut_and_crop_video(raw_download_path, clip_path, start, end, video_data['crops'][clip_idx],
+                                          no_crop=no_crop)
 
         if not crop_success:
             print(f'Failed to cut-and-crop clip #{clip_idx}', video_data)
@@ -148,7 +154,7 @@ def read_file_as_space_separated_data(filepath: os.PathLike) -> Dict:
     return data
 
 
-def download_video(video_id, download_path, resolution: int=None, video_format="mp4", log_file=None):
+def download_video(video_id, download_path, resolution: int = None, video_format="mp4", log_file=None):
     """
     Download video from YouTube.
     :param video_id:        YouTube ID of the video.
@@ -167,10 +173,11 @@ def download_video(video_id, download_path, resolution: int=None, video_format="
         stderr = open(log_file, "a")
     video_selection = f"bestvideo[ext={video_format}]"
     video_selection = video_selection if resolution is None else f"{video_selection}[height={resolution}]"
+    video_selection = f"{video_selection}+bestaudio"
     command = [
         "youtube-dl",
-        "https://youtube.com/watch?v={}".format(video_id), "--quiet", "-f",
-        video_selection,
+        "https://youtube.com/watch?v={}".format(video_id),  "--quiet",
+        "-f", video_selection,
         "--output", download_path,
         "--no-continue"
     ]
@@ -203,21 +210,22 @@ def get_video_resolution(video_path: os.PathLike) -> int:
     return int(output)
 
 
-def cut_and_crop_video(raw_video_path, output_path, start, end, crop: List[int]):
+def cut_and_crop_video(raw_video_path, output_path, start, end, crop: List[int], no_crop: bool):
     # if os.path.isfile(output_path): return True # File already exists
 
     x, out_w, y, out_h = crop
-
-    command = ' '.join([
+    cmd_args = [
         "ffmpeg", "-i", raw_video_path,
-        "-strict", "-2", # Some legacy arguments
-        "-loglevel", "quiet", # Verbosity arguments
-        "-qscale", "0", # Preserve the quality
-        "-y", # Overwrite if the file exists
-        "-ss", str(start), "-to", str(end), # Cut arguments
-        "-filter:v", f'"crop={out_w}:{out_h}:{x}:{y}"', # Crop arguments
-        output_path
-    ])
+        "-strict", "-2",  # Some legacy arguments
+        "-loglevel", "quiet",  # Verbosity arguments
+        "-qscale", "0",  # Preserve the quality
+        "-y",  # Overwrite if the file exists
+        "-ss", str(start), "-to", str(end),  # Cut arguments
+    ]
+    if not no_crop:
+        cmd_args += ["-filter:v", f'"crop={out_w}:{out_h}:{x}:{y}"']  # Crop arguments
+    cmd_args.append(output_path)
+    command = ' '.join(cmd_args)
 
     return_code = subprocess.call(command, shell=True)
     success = return_code == 0
@@ -230,13 +238,16 @@ def cut_and_crop_video(raw_video_path, output_path, start, end, crop: List[int])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download HDTF dataset")
-    parser.add_argument('-s', '--source_dir', type=str, default='HDTF_dataset', help='Path to the directory with the dataset')
+    parser.add_argument('-s', '--source_dir', type=str, default='HDTF_dataset',
+                        help='Path to the directory with the dataset')
     parser.add_argument('-o', '--output_dir', type=str, help='Where to save the videos?')
     parser.add_argument('-w', '--num_workers', type=int, default=8, help='Number of workers for downloading')
+    parser.add_argument('--no_crop', action="store_true", help='Number of workers for downloading')
     args = parser.parse_args()
 
     download_hdtf(
         args.source_dir,
         args.output_dir,
         args.num_workers,
+        args.no_crop
     )
